@@ -1,0 +1,14 @@
+/augmentation
+/Data
+/evaluation/data
+/lightning_logs
+/LossFunctions/__pycache__
+/Metrics_results
+/models/__pycache__
+/saved
+/tokenized/*/
+/models/calibrate/__pycache__
+/models/Super_BERT/__pycache__
+/models/Super_BERT/multi_label/__pycache__
+/models/Super_BERT/multi_label/multi_label_implementations/__pycache__
+/models/Super_BERT/multi_label/multi_label_implementations/augmentation/__pycache__
