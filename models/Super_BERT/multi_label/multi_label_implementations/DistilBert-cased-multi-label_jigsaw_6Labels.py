@@ -22,7 +22,7 @@ loss_fn_name =  'FL' #'BCE'
 ##### for dataloaders ####
 PIN_MEMORY = True
 NUM_WORKERS = 0
-PREFETCH_FACTOR = None
+PREFETCH_FACTOR = None 
 MAX_LENGTH = 128
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu') # load the device as cuda if you have a graphic card or cpu if not
