@@ -23,8 +23,8 @@ nb_labels = 6
 LABEL_LIST = ['toxicity', 'obscene', 'sexual_explicit',
             'identity_attack', 'insult', 'threat']
 
-tokenizer = transformers.AutoTokenizer.from_pretrained('distilbert-base-uncased')
-tr_model = transformers.AutoModel.from_pretrained('distilbert-base-uncased')
+tokenizer = transformers.AutoTokenizer.from_pretrained('roberta-base')
+tr_model = transformers.AutoModel.from_pretrained('roberta-base')
 model = TransformerClassifierStack(tr_model, nb_labels, freeze=True) # Duchene freezes the layer
 
 BATCH_SIZE = 32
@@ -32,13 +32,13 @@ LR=1e-4
 PIN_MEMORY = True
 NUM_WORKERS = 0
 PREFETCH_FACTOR = None
-NUM_EPOCHS = 1
+NUM_EPOCHS = 3 # the paper says the tests are run for 3 epochs
 
 torch.cuda.empty_cache() 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu') # load the device as cuda if you have a graphic card or cpu if not
 
-METRIC_FILE_PATH = '././Metrics_results/distilbert-base-uncased/distilbert_uncased.metric.json'
-MODEL_FILE_PATH = f'././saved/distilbert-base-uncased/distilbert-base-uncased-corentin.model'
+METRIC_FILE_PATH = '././Metrics_results/roberta-base/roberta_base.metric.json'
+MODEL_FILE_PATH = f'././saved/roberta-base/roberta-base-corentin-bce.model'
 print('does file exist?', os.path.exists(METRIC_FILE_PATH))
 
 class JigsawDataset(Dataset):

@@ -6,21 +6,20 @@ import tqdm
 from torch.utils.data import DataLoader
 import pandas as pd
 sys.path.append('./')
-from LossFunctions.ClassWiseExpectedCalibrationError import CECE
 from models.Super_BERT.multi_label.multi_label_implementations.model_skeleton_multilabel_v4 import HateSpeechDataset, HateSpeechTagger, HateSpeechv2Dataset
 import pickle
 import os
 
 torch.cuda.empty_cache()
 
-MODEL_NAME = 'GroNLP/hateBERT'
+MODEL_NAME = 'distilbert-base-cased'
 BATCH = 16
 
 ##### for dataloaders ####
 PIN_MEMORY = True
 NUM_WORKERS = 0
 PREFETCH_FACTOR = None
-MAX_LENGTH = 128
+MAX_LENGTH = 198
 
 # In Malta you can get a hefty fine or get imprisonment if you are charged with Hate Speech. So calibrate that thing!
 sys.path.append(os.path.abspath('./models/Super_BERT/multi_label/multi_label_implementations'))
@@ -29,7 +28,7 @@ sys.path.append(os.path.abspath('./models/Super_BERT/multi_label/multi_label_imp
 test_samples = pd.read_csv('././Data/jigsaw.test.csv') #torch.load('././tokenized/BERT-BASE-CASED/test.pth') # Call the tokenized dataset
 test_dataloader = DataLoader(HateSpeechv2Dataset(dataset=test_samples, model_name=MODEL_NAME, max_length=MAX_LENGTH, without_sexual_explict=False), batch_size=BATCH, shuffle=True, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH_FACTOR, pin_memory=PIN_MEMORY) # convert it to a pytorch dataset
 
-folder_name, file_name = 'hateBERT',  'HateBERT_kaiming_128_BCE_3_6lbls_jigsaw_2e-05'
+folder_name, file_name = 'distilbert-base-cased',  'DistilBERT_198_jigsaw_FL_3_6lbls_jigsaw'
 checkpoint_path = f'././saved/{folder_name}/{file_name}.model'
 
 # from here: https://stackoverflow.com/questions/67838192/size-mismatch-runtime-error-when-trying-to-load-a-pytorch-model
@@ -69,7 +68,7 @@ test_metric = MetricCollection({
 
 test_metric.to(device)
 base_model.eval() 
-n_bins, NUM_LABELS = 15, 6
+
 predictions, targets = [], []
 progress = tqdm.tqdm(test_dataloader, desc='Test batch...', leave=False)
 test_log = []
@@ -91,10 +90,6 @@ with torch.no_grad():
     all_targets = torch.cat(targets)
 
     results = test_metric(all_predictions.to(torch.float32), all_targets.to(torch.int32))    
-    class_wise_calibration_error = CECE(num_classes=NUM_LABELS, n_bins=n_bins, norm='l2') # get the count of classes for the experiment and the number of bins (Dataset will be split in 10 parts or nbins)
-    class_wise_calibration_error.update(all_predictions.to(torch.float32), all_targets.to(torch.int32))
-    cece_result = class_wise_calibration_error.compute()
-    
     test_log.append({
         #'epoch' : epoch, 
         'accuracy': results['accuracy'].item(),
@@ -122,11 +117,11 @@ with torch.no_grad():
         'recall_per_class_weighted': results['recall_per_class_weighted'],
         'precision_recall_curve': results['precision_recall_curve'],
         'confusion_matrix': results['confusion_matrix'],
-        'CECE' : cece_result.item()
+        #'CECE' : cece_result.item()
     })
-    print(f'\n\nPrinting test metrics.  Accuracy: {results['accuracy'].item()}, F1 (Macro): {results['f1_Macro'].item()}, F1 (Micro): {results['f1_Micro'].item()}, F1 (Weighted) : {results['f1_Weighted'].item()}, AUC: { results['auc_roc_macro'].item() }, precision_macro: {results['precision_macro'].item()}, precision_micro: {results['precision_micro'].item()}, recall_macro: {results['recall_macro'].item()}, recall_micro: {results['recall_micro'].item()}, CECE: {cece_result.item()}')#f'Training Epoch {epoch_id}: Average Training Loss: {average_loss}')
+    print(f'\n\nPrinting test metrics.  Accuracy: {results['accuracy'].item()}, F1 (Macro): {results['f1_Micro'].item()}, F1 (Weighted) : {results['f1_Weighted'].item()}, AUC: { results['auc_roc_macro'].item() }, precision_macro: {results['precision_macro'].item()}, precision_micro: {results['precision_micro'].item()}, recall_macro: {results['recall_macro'].item()}, recall_micro: {results['recall_micro'].item()}')#f'Training Epoch {epoch_id}: Average Training Loss: {average_loss}')
     
-    with open(f'././././Metrics_results/HateBert/test/HateBert-ML-jigsaw_6lbls_{'BCE'}_{MAX_LENGTH}_testing.pkl', 'wb') as f:
+    with open(f'././././Metrics_results/distilbert-base-cased/test/DistilBERT-198-ML-Cased-jigsaw_6lbls_{'FL'}__training.pkl', 'wb') as f:
         pickle.dump(test_log, f)
 
 

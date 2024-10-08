@@ -5,7 +5,7 @@ import sys
 from torchmetrics import MetricCollection, Metric, Accuracy, Precision, Recall, AUROC, F1Score, ROC, PrecisionRecallCurve, ConfusionMatrix
 import pickle
 sys.path.append('./')
-from model_skeleton_multilabel_v4 import HateSpeechDataset, HateSpeechTagger, HateSpeechv2Dataset
+from model_skeleton_multilabel_v5 import HateSpeechDataset, HateSpeechTagger, HateSpeechv2Dataset
 from LossFunctions.ClassWiseExpectedCalibrationError import CECE
 from LossFunctions.FocalLoss import FocalLoss
 from sklearn.utils import class_weight
@@ -23,7 +23,7 @@ loss_fn_name =  'FL' #'BCE'
 PIN_MEMORY = True
 NUM_WORKERS = 0
 PREFETCH_FACTOR = None 
-MAX_LENGTH = 128
+MAX_LENGTH = 198 # 128
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu') # load the device as cuda if you have a graphic card or cpu if not
 
@@ -283,14 +283,14 @@ try:
        # validate epoch
        validate_epoch(epoch=epoch)
        
-       torch.save(transformer, f'././././saved/distilbert-base-cased/DistilBERT_jigsaw_{loss_fn_name}_{epoch}_6lbls_jigsaw.model')
+       torch.save(transformer, f'././././saved/distilbert-base-cased/DistilBERT_{MAX_LENGTH}_jigsaw_{loss_fn_name}_{epoch}_6lbls_jigsaw.model')
        
        torch.cuda.empty_cache() # always empty cache before you start a new epoch
     
-    with open(f'././././Metrics_results/distilbert-base-cased/training/DistilBERT-ML-Cased-jigsaw_6lbls_{loss_fn_name}__training.pkl', 'wb') as f:
+    with open(f'././././Metrics_results/distilbert-base-cased/training/DistilBERT-ML-Cased-jigsaw_6lbls_{MAX_LENGTH}_{loss_fn_name}__training.pkl', 'wb') as f:
         pickle.dump(training_log, f)
 
-    with open(f'././././Metrics_results/distilbert-base-cased/validation/DistilBERT-ML-Cased-jigsaw_6lbls_{loss_fn_name}__validation.pkl', 'wb') as f:
+    with open(f'././././Metrics_results/distilbert-base-cased/validation/DistilBERT-ML-Cased-jigsaw_6lbls_{MAX_LENGTH}_{loss_fn_name}__validation.pkl', 'wb') as f:
         pickle.dump(validation_log, f)
    
 except RuntimeError as e:

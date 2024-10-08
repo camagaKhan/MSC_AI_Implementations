@@ -6,6 +6,7 @@ import tqdm
 from torch.utils.data import DataLoader
 import pandas as pd
 sys.path.append('./')
+from LossFunctions.ClassWiseExpectedCalibrationError import CECE
 from models.Super_BERT.multi_label.multi_label_implementations.model_skeleton_multilabel_v4 import HateSpeechDataset, HateSpeechTagger, HateSpeechv2Dataset
 import pickle
 import os
@@ -69,7 +70,7 @@ test_metric = MetricCollection({
 
 test_metric.to(device)
 base_model.eval() 
-
+n_bins, NUM_LABELS = 15, 6
 predictions, targets = [], []
 progress = tqdm.tqdm(test_dataloader, desc='Test batch...', leave=False)
 test_log = []
@@ -90,7 +91,12 @@ with torch.no_grad():
     all_predictions = torch.cat(predictions)
     all_targets = torch.cat(targets)
 
-    results = test_metric(all_predictions.to(torch.float32), all_targets.to(torch.int32))    
+    results = test_metric(all_predictions.to(torch.float32), all_targets.to(torch.int32)) 
+    
+    class_wise_calibration_error = CECE(num_classes=NUM_LABELS, n_bins=n_bins, norm='l2') # get the count of classes for the experiment and the number of bins (Dataset will be split in 10 parts or nbins)
+    class_wise_calibration_error.update(all_predictions.to(torch.float32), all_targets.to(torch.int32))
+    cece_result = class_wise_calibration_error.compute()
+       
     test_log.append({
         #'epoch' : epoch, 
         'accuracy': results['accuracy'].item(),
@@ -118,12 +124,12 @@ with torch.no_grad():
         'recall_per_class_weighted': results['recall_per_class_weighted'],
         'precision_recall_curve': results['precision_recall_curve'],
         'confusion_matrix': results['confusion_matrix'],
-        'f1': results['f1']
-        #'CECE' : cece_result.item()
+        'f1': results['f1'],
+        'CECE' : cece_result.item()
     })
-    print(f'\n\nPrinting test metrics.  Accuracy: {results['accuracy'].item()}, F1: {results['f1'].item()}, F1 (95%): {results['f1_95'].item()}, F1 (Macro): {results['f1_Micro'].item()}, F1 (Weighted) : {results['f1_Weighted'].item()}, AUC: { results['auc_roc_macro'].item() }, precision_macro: {results['precision_macro'].item()}, precision_micro: {results['precision_micro'].item()}, recall_macro: {results['recall_macro'].item()}, recall_micro: {results['recall_micro'].item()}')#f'Training Epoch {epoch_id}: Average Training Loss: {average_loss}')
+    print(f'\n\nPrinting test metrics.  Accuracy: {results['accuracy'].item()}, F1 (Macro): {results['f1_Macro'].item()}, F1 (Micro): {results['f1_Micro'].item()}, F1 (Weighted) : {results['f1_Weighted'].item()}, AUC: { results['auc_roc_macro'].item() }, precision_macro: {results['precision_macro'].item()}, precision_micro: {results['precision_micro'].item()}, recall_macro: {results['recall_macro'].item()}, recall_micro: {results['recall_micro'].item()}, CECE: {cece_result.item()}')#f'Training Epoch {epoch_id}: Average Training Loss: {average_loss}')
     
-    with open(f'././././Metrics_results/distilbert-base-uncased/test/DistilBERT-ML-Cased-jigsaw_6lbls_{'FL'}__training.pkl', 'wb') as f:
+    with open(f'././././Metrics_results/distilbert-base-uncased/test/DistilBERT-ML-Uncased-jigsaw_6lbls_{'BCE'}_128CECE_training.pkl', 'wb') as f:
         pickle.dump(test_log, f)
 
 
