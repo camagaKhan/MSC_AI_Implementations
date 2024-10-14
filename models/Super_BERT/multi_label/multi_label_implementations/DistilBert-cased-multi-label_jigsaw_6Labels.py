@@ -5,7 +5,7 @@ import sys
 from torchmetrics import MetricCollection, Metric, Accuracy, Precision, Recall, AUROC, F1Score, ROC, PrecisionRecallCurve, ConfusionMatrix
 import pickle
 sys.path.append('./')
-from model_skeleton_multilabel_v5 import HateSpeechDataset, HateSpeechTagger, HateSpeechv2Dataset
+from model_skeleton_multilabel_v3 import HateSpeechDataset, HateSpeechTagger, HateSpeechv2Dataset
 from LossFunctions.ClassWiseExpectedCalibrationError import CECE
 from LossFunctions.FocalLoss import FocalLoss
 from sklearn.utils import class_weight
@@ -23,7 +23,7 @@ loss_fn_name =  'FL' #'BCE'
 PIN_MEMORY = True
 NUM_WORKERS = 0
 PREFETCH_FACTOR = None 
-MAX_LENGTH = 198 # 128
+MAX_LENGTH = 128 # 128
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu') # load the device as cuda if you have a graphic card or cpu if not
 
@@ -155,7 +155,10 @@ def train_epoch(epoch, check_interval = 10_000) :
     all_targets = torch.cat(targets)
     
     results = train_metric(all_predictions.to(torch.float32), all_targets.to(torch.int32))   
-            
+    class_wise_calibration_error = CECE(num_classes=NUM_LABELS, n_bins=n_bins, norm='l2') # get the count of classes for the experiment and the number of bins (Dataset will be split in 10 parts or nbins)
+    class_wise_calibration_error.update(all_predictions.to(torch.float32), all_targets.to(torch.int32))
+    cece_result = class_wise_calibration_error.compute()
+                
     avg_training_loss = total_loss/num_batches
     training_log.append({
         'epoch' : epoch, 
@@ -183,7 +186,8 @@ def train_epoch(epoch, check_interval = 10_000) :
         'recall_per_class_micro': results['recall_per_class_micro'],
         'recall_per_class_weighted': results['recall_per_class_weighted'],
         'precision_recall_curve': results['precision_recall_curve'],
-        'confusion_matrix': results['confusion_matrix']
+        'confusion_matrix': results['confusion_matrix'],
+       # 'CECE' : cece_result.item()
     })
     print(f'\n\nPrinting training metrics. Epoch: {epoch}, loss: {avg_training_loss}, Accuracy: {results['accuracy'].item()}, F1 (Macro): {results['f1_Micro'].item()}, F1 (Weighted) : {results['f1_Weighted'].item()},  AUC: { results['auc_roc_macro'].item() }, precision_macro: {results['precision_macro'].item()}, precision_micro: {results['precision_micro'].item()}, recall_macro: {results['recall_macro'].item()}, recall_micro: {results['recall_micro'].item()}')#f'Training Epoch {epoch_id}: Average Training Loss: {average_loss}')
     #f'Training Epoch {epoch_id}: Average Training Loss: {average_loss}')
@@ -283,14 +287,14 @@ try:
        # validate epoch
        validate_epoch(epoch=epoch)
        
-       torch.save(transformer, f'././././saved/distilbert-base-cased/DistilBERT_{MAX_LENGTH}_jigsaw_{loss_fn_name}_{epoch}_6lbls_jigsaw.model')
+       torch.save(transformer, f'././././saved/distilbert-base-cased/DistilBERT_{MAX_LENGTH}_jigsaw_{loss_fn_name}_{epoch}_6lbls_MAX_POOLING_jigsaw.model')
        
        torch.cuda.empty_cache() # always empty cache before you start a new epoch
     
-    with open(f'././././Metrics_results/distilbert-base-cased/training/DistilBERT-ML-Cased-jigsaw_6lbls_{MAX_LENGTH}_{loss_fn_name}__training.pkl', 'wb') as f:
+    with open(f'././././Metrics_results/distilbert-base-cased/training/DistilBERT-ML-Cased-jigsaw_6lbls_{MAX_LENGTH}_{loss_fn_name}_MAX_POOLING_training.pkl', 'wb') as f:
         pickle.dump(training_log, f)
 
-    with open(f'././././Metrics_results/distilbert-base-cased/validation/DistilBERT-ML-Cased-jigsaw_6lbls_{MAX_LENGTH}_{loss_fn_name}__validation.pkl', 'wb') as f:
+    with open(f'././././Metrics_results/distilbert-base-cased/validation/DistilBERT-ML-Cased-jigsaw_6lbls_{MAX_LENGTH}_{loss_fn_name}_MAX_POOLING_validation.pkl', 'wb') as f:
         pickle.dump(validation_log, f)
    
 except RuntimeError as e:

@@ -5,7 +5,7 @@ import sys
 from torchmetrics import MetricCollection, Metric, Accuracy, Precision, Recall, AUROC, F1Score, ROC, PrecisionRecallCurve, ConfusionMatrix
 import pickle
 sys.path.append('./')
-from model_skeleton_multilabel_v4 import HateSpeechDataset, HateSpeechTagger, HateSpeechv2Dataset
+from model_skeleton_multilabel_v3 import HateSpeechDataset, HateSpeechTagger, HateSpeechv2Dataset
 from LossFunctions.ClassWiseExpectedCalibrationError import CECE
 from LossFunctions.FocalLoss import FocalLoss
 from sklearn.utils import class_weight
@@ -17,7 +17,7 @@ EPOCHS = 3
 LEARNING_RATE = 2e-5
 NUM_LABELS = 6
 BATCH = 16
-loss_fn_name = 'BCE' #'BCE'
+loss_fn_name = 'FL' #'BCE'
 
 ##### for dataloaders ####
 PIN_MEMORY = True
@@ -272,19 +272,19 @@ try:
    
     for epoch in progress:
        # Start training
-       train_epoch(epoch=epoch, check_interval=5_000)
+       train_epoch(epoch=epoch, check_interval=10_000)
        
        # validate epoch
        validate_epoch(epoch=epoch)
        
-       torch.save(transformer, f'././././saved/bert-base-uncased/BERT_uncased_xavier_jigsaw_{MAX_LENGTH}_{loss_fn_name}_{epoch}_6lbls_jigsaw.model')
+       torch.save(transformer, f'././././saved/bert-base-uncased/BERT_uncased_kaiming_jigsaw_{MAX_LENGTH}_{loss_fn_name}_{epoch}_MAX_POOLING_6lbls_jigsaw.model')
        
        torch.cuda.empty_cache() # always empty cache before you start a new epoch
     
-    with open(f'././././Metrics_results/BERT-Base-Uncased/training/bert-ML-uncased_xavier_jigsaw_{MAX_LENGTH}_6lbls_{loss_fn_name}__training.pkl', 'wb') as f:
+    with open(f'././././Metrics_results/BERT-Base-Uncased/training/bert-ML-uncased_kaiming_jigsaw_{MAX_LENGTH}_6lbls_{loss_fn_name}_MAX_POOLING_training.pkl', 'wb') as f:
         pickle.dump(training_log, f)
 
-    with open(f'././././Metrics_results/BERT-Base-Uncased/training/bert-ML-uncased_xavier_jigsaw_{MAX_LENGTH}_6lbls_{loss_fn_name}__validation.pkl', 'wb') as f:
+    with open(f'././././Metrics_results/BERT-Base-Uncased/training/bert-ML-uncased_kaiming_jigsaw_{MAX_LENGTH}_6lbls_{loss_fn_name}_MAX_POOLING_validation.pkl', 'wb') as f:
         pickle.dump(validation_log, f)
    
 except RuntimeError as e:

@@ -7,40 +7,42 @@ from torch.utils.data import DataLoader
 import pandas as pd
 sys.path.append('./')
 from LossFunctions.ClassWiseExpectedCalibrationError import CECE
-from models.Super_BERT.multi_label.multi_label_implementations.model_skeleton_multilabel_v4 import HateSpeechDataset, HateSpeechTagger, HateSpeechv2Dataset
+from models.Super_BERT.multi_label.multi_label_implementations.model_skeleton_multilabel_v4 import HateSpeechEnsembleDataset
 import pickle
 import os
+import glob 
 
 torch.cuda.empty_cache()
 
-MODEL_NAME = 'distilbert-base-uncased'
+MODEL_NAME_HATEBERT, MODEL_NAME_DISTILBERT = 'bert-base-cased', 'distilbert-base-cased'
 BATCH = 16
 
 ##### for dataloaders ####
 PIN_MEMORY = True
 NUM_WORKERS = 0
 PREFETCH_FACTOR = None
-MAX_LENGTH = 128
+NUM_LABELS, n_bins = 6, 15
 
 # In Malta you can get a hefty fine or get imprisonment if you are charged with Hate Speech. So calibrate that thing!
 sys.path.append(os.path.abspath('./models/Super_BERT/multi_label/multi_label_implementations'))
 
-# Load test set only!
+# Load validation set only!
 test_samples = pd.read_csv('././Data/jigsaw.test.csv') #torch.load('././tokenized/BERT-BASE-CASED/test.pth') # Call the tokenized dataset
-test_dataloader = DataLoader(HateSpeechv2Dataset(dataset=test_samples, model_name=MODEL_NAME, max_length=MAX_LENGTH, without_sexual_explict=False), batch_size=BATCH, shuffle=True, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH_FACTOR, pin_memory=PIN_MEMORY) # convert it to a pytorch dataset
-
-folder_name, file_name = 'distilbert-base-uncased',  'DistilBERT_jigsaw_BCE_3_6lbls_jigsaw'
-checkpoint_path = f'././saved/{folder_name}/{file_name}.model'
-
-# from here: https://stackoverflow.com/questions/67838192/size-mismatch-runtime-error-when-trying-to-load-a-pytorch-model
-
-# Load the best checkpoint of the model based on the validation loss
-base_model = torch.load(checkpoint_path)
+test_dataloader = DataLoader(HateSpeechEnsembleDataset(dataset=test_samples, model_name_1=MODEL_NAME_DISTILBERT, model_name_2=MODEL_NAME_HATEBERT, without_sexual_explict=False), shuffle=True, batch_size=BATCH, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH_FACTOR, pin_memory=PIN_MEMORY) # convert it to a pytorch datasettest_dataloader_distilBERT = DataLoader(HateSpeechv2Dataset(dataset=test_samples, model_name=MODEL_NAME_DISTILBERT, without_sexual_explict=False), batch_size=BATCH, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH_FACTOR, pin_memory=PIN_MEMORY) # convert it to a pytorch dataset
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-base_model.to(device)
 
-THRESHOLD = .5 # .569 <-- dan tajjeb
+bert_uncased, DistilBERT = torch.load(f'././saved/bert-base-uncased/BERT_uncased_kaiming_jigsaw_128_FL_3_MAX_POOLING_6lbls_jigsaw.model'), torch.load('././saved/distilbert-base-cased/DistilBERT_128_jigsaw_FL_3_6lbls_MAX_POOLING_jigsaw.model')
+
+bert_uncased.to(device)
+DistilBERT.to(device)
+
+bert_uncased.eval()
+DistilBERT.eval()
+
+
+
+THRESHOLD = .5
 num_labels = 6
 test_metric = MetricCollection({
             'accuracy': Accuracy(task="multilabel", threshold=THRESHOLD, num_labels=num_labels),
@@ -50,7 +52,6 @@ test_metric = MetricCollection({
             'f1_Micro': F1Score(task='multilabel', threshold= THRESHOLD, average='micro', num_labels=num_labels),
             'f1_Weighted': F1Score(task='multilabel', threshold= THRESHOLD, average='weighted', num_labels=num_labels),
             'f1': F1Score(task='multilabel', threshold= THRESHOLD, num_labels=num_labels),
-            'f1_95': F1Score(task='multilabel', threshold= 0.9590000000000001, num_labels=num_labels), # Corentin Duchene
             'f1_per_class': F1Score(num_labels=num_labels, threshold= THRESHOLD, average=None, task='multilabel'),
             'precision_macro': Precision(num_labels=num_labels, threshold= THRESHOLD, average='macro', task='multilabel'),
             'precision_micro': Precision(num_labels=num_labels, threshold= THRESHOLD, average='micro', task='multilabel'),
@@ -69,35 +70,49 @@ test_metric = MetricCollection({
         })
 
 test_metric.to(device)
-base_model.eval() 
-n_bins, NUM_LABELS = 15, 6
-predictions, targets = [], []
-progress = tqdm.tqdm(test_dataloader, desc='Test batch...', leave=False)
-test_log = []
+#for checkpoint_path in tqdm.tqdm(files, desc="Evaluating Checkpoints for Ensemble Stacking"): 
+hs_predictions, hs_targets, predictions, targets, predictions_hatebert, predictions_distilbert = [], [], [], [], [], []
+# test_log = []
 torch.cuda.empty_cache()
 with torch.no_grad():
+    progress = tqdm.tqdm(test_dataloader, desc='Test batch...', leave=False)
     for _, data in enumerate(progress):            
-        input_ids = data['input_ids'].to(device, non_blocking=True)
-        attention_mask = data['attention_mask'].to(device, non_blocking=True)
+        input_ids_distilBERT = data['input_ids_1'].to(device, non_blocking=True)
+        attention_mask_distilBERT = data['attention_mask_1'].to(device, non_blocking=True)        
+        
+        input_ids_HateBERT = data['input_ids_2'].to(device, non_blocking=True)
+        attention_mask_HateBERT = data['attention_mask_2'].to(device, non_blocking=True)
+        
         labels = data['labels'].to(device, non_blocking=True)
         
-        pred = base_model(input_ids, attention_mask) 
+        pred_distilBERT = DistilBERT(input_ids_distilBERT, attention_mask_distilBERT)
+        probs_distilBERT = torch.sigmoid(pred_distilBERT)
         
-        probs = torch.sigmoid(pred)
-        labels_cpu = labels.detach()
-        predictions.append(probs)
-        targets.append(labels_cpu)
+        pred_hateBERT = bert_uncased(input_ids_HateBERT, attention_mask_HateBERT)
+        probs_hateBERT = torch.sigmoid(pred_hateBERT)
+        
+        
+        combined_probs = (probs_hateBERT + probs_distilBERT) / 2
 
-    all_predictions = torch.cat(predictions)
-    all_targets = torch.cat(targets)
+        # Store predictions and targets
+        predictions_hatebert.append(probs_hateBERT)
+        predictions_distilbert.append(probs_distilBERT)
+        hs_predictions.append(combined_probs)
+        targets.append(labels.detach())
 
-    results = test_metric(all_predictions.to(torch.float32), all_targets.to(torch.int32)) 
+    stacked_predictions = torch.cat(hs_predictions)
+    stacked_targets = torch.cat(targets)
     
-    class_wise_calibration_error = CECE(num_classes=NUM_LABELS, n_bins=n_bins, norm='l2') # get the count of classes for the experiment and the number of bins (Dataset will be split in 10 parts or nbins)
-    class_wise_calibration_error.update(all_predictions.to(torch.float32), all_targets.to(torch.int32))
-    cece_result = class_wise_calibration_error.compute()
-       
-    test_log.append({
+# Now calculate the metrics using the stacked predictions and targets
+results = test_metric(stacked_predictions.to(torch.float32), stacked_targets.to(torch.int32))
+test_log = []
+
+class_wise_calibration_error = CECE(num_classes=NUM_LABELS, n_bins=n_bins, norm='l2') # get the count of classes for the experiment and the number of bins (Dataset will be split in 10 parts or nbins)
+class_wise_calibration_error.update(stacked_predictions.to(torch.float32), stacked_targets.to(torch.int32))
+cece_result = class_wise_calibration_error.compute()
+
+# Log the results
+test_log.append({
         #'epoch' : epoch, 
         'accuracy': results['accuracy'].item(),
         #'train_loss' : avg_validation_loss,
@@ -124,13 +139,19 @@ with torch.no_grad():
         'recall_per_class_weighted': results['recall_per_class_weighted'],
         'precision_recall_curve': results['precision_recall_curve'],
         'confusion_matrix': results['confusion_matrix'],
-        'f1': results['f1'],
         'CECE' : cece_result.item()
     })
-    print(f'\n\nPrinting test metrics.  Accuracy: {results['accuracy'].item()}, F1 (Macro): {results['f1_Macro'].item()}, F1 (Micro): {results['f1_Micro'].item()}, F1 (Weighted) : {results['f1_Weighted'].item()}, AUC: { results['auc_roc_macro'].item() }, precision_macro: {results['precision_macro'].item()}, precision_micro: {results['precision_micro'].item()}, recall_macro: {results['recall_macro'].item()}, recall_micro: {results['recall_micro'].item()}, CECE: {cece_result.item()}')#f'Training Epoch {epoch_id}: Average Training Loss: {average_loss}')
-    
-    with open(f'././././Metrics_results/distilbert-base-uncased/test/DistilBERT-ML-Uncased-jigsaw_6lbls_{'BCE'}_128CECE_training.pkl', 'wb') as f:
-        pickle.dump(test_log, f)
+
+# Print the important metrics
+print(f'\n\nPrinting test metrics, AUC: {results["auc_roc_macro"].item()}, '
+      f'f1 (Macro): {results["f1_Macro"].item()}, f1 (Micro): {results["f1_Micro"].item()}, '
+      f'precision_macro: {results["precision_macro"].item()}, precision_micro: {results["precision_micro"].item()}, '
+      f'recall_macro: {results["recall_macro"].item()}, recall_micro: {results["recall_micro"].item()}')
+
+with open(f'././././Metrics_results/ensemble/distilbert_cased_bert_uncased-ML-Cased-jigsaw_6lbls_{'FL'}_ensemble_stacking_training.pkl', 'wb') as f:
+    pickle.dump(test_log, f)
+
+
 
 
 

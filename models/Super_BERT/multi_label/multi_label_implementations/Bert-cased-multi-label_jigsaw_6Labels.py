@@ -2,10 +2,11 @@ import torch
 from torch.utils.data import DataLoader
 import tqdm
 import sys 
-from torchmetrics import MetricCollection, Metric, Accuracy, Precision, Recall, AUROC, F1Score, ROC, PrecisionRecallCurve
+from torchmetrics import MetricCollection, ConfusionMatrix, Metric, Accuracy, Precision, Recall, AUROC, F1Score, ROC, PrecisionRecallCurve
 import pickle
 sys.path.append('./')
-from model_skeleton_multilabel_v4 import HateSpeechDataset, HateSpeechTagger, HateSpeechv2Dataset
+from model_skeleton_multilabel_v3 import HateSpeechDataset, HateSpeechTagger, HateSpeechv2Dataset
+from LossFunctions.ClassWiseExpectedCalibrationError import CECE
 from LossFunctions.FocalLoss import FocalLoss
 from sklearn.utils import class_weight
 import numpy as np
@@ -21,7 +22,7 @@ BATCH = 16
 PIN_MEMORY = True
 NUM_WORKERS = 0
 PREFETCH_FACTOR = None
-MAX_LENGTH = 150
+MAX_LENGTH = 128
 loss_fn_name = 'FL'
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu') # load the device as cuda if you have a graphic card or cpu if not
@@ -67,19 +68,28 @@ if loss_fn_name == 'FL':
 
 THRESHOLD, num_labels = .5, NUM_LABELS # 8 was ok
 train_metric = MetricCollection({
+            'accuracy': Accuracy(task="multilabel", threshold=THRESHOLD, num_labels=num_labels),
             'auc_roc_macro': AUROC(num_labels=num_labels, average='macro', task='multilabel'),
             'auc_per_class': AUROC(num_labels=num_labels, average=None, task='multilabel'),
             'f1_Macro': F1Score(task='multilabel', threshold= THRESHOLD, average='macro', num_labels=num_labels),
             'f1_Micro': F1Score(task='multilabel', threshold= THRESHOLD, average='micro', num_labels=num_labels),
+            'f1_Weighted': F1Score(task='multilabel', threshold= THRESHOLD, average='weighted', num_labels=num_labels),
             'f1': F1Score(task='multilabel', threshold= THRESHOLD, num_labels=num_labels),
             'f1_per_class': F1Score(num_labels=num_labels, threshold= THRESHOLD, average=None, task='multilabel'),
             'precision_macro': Precision(num_labels=num_labels, threshold= THRESHOLD, average='macro', task='multilabel'),
             'precision_micro': Precision(num_labels=num_labels, threshold= THRESHOLD, average='micro', task='multilabel'),
-            'precision_per_class': Precision(num_labels=num_labels, threshold= THRESHOLD, average=None, task='multilabel'),
+            'precision_per_class_macro': Precision(num_labels=num_labels, threshold= THRESHOLD, average='macro', task='multilabel'),
+            'precision_per_class_micro': Precision(num_labels=num_labels, threshold= THRESHOLD, average='micro', task='multilabel'),
+            'precision_per_class_weighted': Precision(num_labels=num_labels, threshold= THRESHOLD, average='weighted', task='multilabel'),
             'recall_macro': Recall(num_labels=num_labels, threshold= THRESHOLD, average='macro', task='multilabel'), 
             'recall_micro': Recall(num_labels=num_labels, threshold= THRESHOLD,  average='micro', task='multilabel'), 
+            'recall_weighted': Recall(num_labels=num_labels, threshold= THRESHOLD,  average='weighted', task='multilabel'), 
+            'recall_per_class_macro': Recall(num_labels=num_labels, threshold= THRESHOLD, average='macro', task='multilabel'),
+            'recall_per_class_micro': Recall(num_labels=num_labels, threshold= THRESHOLD, average='micro', task='multilabel'),
+            'recall_per_class_weighted': Recall(num_labels=num_labels, threshold= THRESHOLD, average='weighted', task='multilabel'),
             'precision_recall_curve': PrecisionRecallCurve(task='multilabel', num_labels=num_labels),
-            'roc_curve': ROC(num_labels=num_labels, task='multilabel')
+            'roc_curve': ROC(num_labels=num_labels, task='multilabel'),
+            'confusion_matrix': ConfusionMatrix(threshold=THRESHOLD, num_labels=num_labels, task='multilabel')
         })
 
 validation_metric = train_metric.clone()
@@ -147,9 +157,11 @@ def train_epoch(epoch, check_interval = 10_000) :
     avg_training_loss = total_loss/num_batches
     training_log.append({
         'epoch' : epoch, 
+        'accuracy': results['accuracy'].item(),
         'train_loss' : avg_training_loss,
         'auc_per_class' : results['auc_per_class'], 
         'auc_roc_macro': results['auc_roc_macro'].item(), 
+        'f1_Weighted': results['f1_Weighted'].item(),
         'f1_Micro': results['f1_Micro'].item(),
         'f1_Macro': results['f1_Macro'].item(),
         'f1_per_class': results['f1_per_class'],
@@ -157,15 +169,25 @@ def train_epoch(epoch, check_interval = 10_000) :
         'precision_micro': results['precision_micro'].item(),
         'recall_macro': results['recall_macro'].item(), 
         'recall_micro': results['recall_micro'].item(),
-        'precision_per_class': results['precision_per_class'],
+        'precision_per_class_macro': results['precision_per_class_macro'],
+        'precision_per_class_micro': results['precision_per_class_micro'],
         'precision_recall_curve': results['precision_recall_curve'],
-        'roc_curve': results['roc_curve']
+        'roc_curve': results['roc_curve'],
+        'precision_per_class_weighted': results['precision_per_class_weighted'],
+        'recall_macro': results['recall_macro'], 
+        'recall_micro': results['recall_micro'], 
+        'recall_weighted': results['recall_weighted'], 
+        'recall_per_class_macro': results['recall_per_class_macro'],
+        'recall_per_class_micro': results['recall_per_class_micro'],
+        'recall_per_class_weighted': results['recall_per_class_weighted'],
+        'precision_recall_curve': results['precision_recall_curve'],
+        'confusion_matrix': results['confusion_matrix']
     })
     print(f'\n\nPrinting training metrics. Epoch: {epoch}, loss: {avg_training_loss}, AUC: { results['auc_roc_macro'].item() }, precision_macro: {results['precision_macro'].item()}, precision_micro: {results['precision_micro'].item()}, recall_macro: {results['recall_macro'].item()}, recall_micro: {results['recall_micro'].item()}')#f'Training Epoch {epoch_id}: Average Training Loss: {average_loss}')
     #f'Training Epoch {epoch_id}: Average Training Loss: {average_loss}')
 
 
-validation_log = []
+validation_log, n_bins, class_wise_calibration_error = [], 15, []
 def validate_epoch(epoch):
     avg_validation_loss = 0.
     total_loss, num_batches = 0., 0
@@ -197,23 +219,41 @@ def validate_epoch(epoch):
         
         results = validation_metric(all_predictions.to(torch.float32), all_targets.to(torch.int32))    
         avg_validation_loss = total_loss/num_batches
+        
+        class_wise_calibration_error = CECE(num_classes=NUM_LABELS, n_bins=n_bins, norm='l2') # get the count of classes for the experiment and the number of bins (Dataset will be split in 10 parts or nbins)
+        class_wise_calibration_error.update(all_predictions.to(torch.float32), all_targets.to(torch.int32))
+        cece_result = class_wise_calibration_error.compute()
+        
         validation_log.append({
-            'epoch' : epoch,
-            'validation_loss' : avg_validation_loss,
-            'auc_per_class' : results['auc_per_class'], 
-            'auc_roc_macro': results['auc_roc_macro'].item(), 
-            'f1_Micro': results['f1_Micro'].item(),
-            'f1_Macro': results['f1_Macro'].item(),
-            'f1_per_class': results['f1_per_class'],
-            'precision_macro': results['precision_macro'].item(),
-            'precision_micro': results['precision_micro'].item(),
-            'recall_macro': results['recall_macro'].item(), 
-            'recall_micro': results['recall_micro'].item(),
-            'precision_per_class': results['precision_per_class'],
-            'precision_recall_curve': results['precision_recall_curve'],
-            'roc_curve': results['roc_curve']
+        'epoch' : epoch, 
+        'accuracy': results['accuracy'].item(),
+        'train_loss' : avg_validation_loss,
+        'auc_per_class' : results['auc_per_class'], 
+        'auc_roc_macro': results['auc_roc_macro'].item(), 
+        'f1_Micro': results['f1_Micro'].item(),
+        'f1_Macro': results['f1_Macro'].item(),
+        'f1_Weighted': results['f1_Weighted'].item(),
+        'f1_per_class': results['f1_per_class'],
+        'precision_macro': results['precision_macro'].item(),
+        'precision_micro': results['precision_micro'].item(),
+        'recall_macro': results['recall_macro'].item(), 
+        'recall_micro': results['recall_micro'].item(),
+        'precision_per_class_macro': results['precision_per_class_macro'],
+        'precision_per_class_micro': results['precision_per_class_micro'],
+        'precision_recall_curve': results['precision_recall_curve'],
+        'roc_curve': results['roc_curve'],
+        'precision_per_class_weighted': results['precision_per_class_weighted'],
+        'recall_macro': results['recall_macro'], 
+        'recall_micro': results['recall_micro'], 
+        'recall_weighted': results['recall_weighted'], 
+        'recall_per_class_macro': results['recall_per_class_macro'],
+        'recall_per_class_micro': results['recall_per_class_micro'],
+        'recall_per_class_weighted': results['recall_per_class_weighted'],
+        'precision_recall_curve': results['precision_recall_curve'],
+        'confusion_matrix': results['confusion_matrix'],
+        'CECE' : cece_result.item()
         })
-        print(f'\n\nPrinting validation metrics. Epoch: {epoch}, loss: {avg_validation_loss}, AUC: { results['auc_roc_macro'].item() }, precision_macro: {results['precision_macro'].item()}, precision_micro: {results['precision_micro'].item()}, recall_macro: {results['recall_macro'].item()}, recall_micro: {results['recall_micro'].item()}')#f'Training Epoch {epoch_id}: Average Training Loss: {average_loss}')
+        print(f'\n\nPrinting validation metrics. Epoch: {epoch}, loss: {avg_validation_loss}, AUC: { results['auc_roc_macro'].item() }, precision_macro: {results['precision_macro'].item()}, precision_micro: {results['precision_micro'].item()}, recall_macro: {results['recall_macro'].item()}, recall_micro: {results['recall_micro'].item()}, CECE: {cece_result.item()}')#f'Training Epoch {epoch_id}: Average Training Loss: {average_loss}')
         return avg_validation_loss
 
 
@@ -224,19 +264,19 @@ try:
    
     for epoch in progress:
        # Start training
-       train_epoch(epoch=epoch, check_interval=5_000)
+       train_epoch(epoch=epoch, check_interval=10_000)
        
        # validate epoch
        validate_epoch(epoch=epoch)
        
-       torch.save(transformer, f'././././saved/bert-base-cased/BERT_xavier_{MAX_LENGTH}_{loss_fn_name}_{epoch}_6lbls_jigsaw_{LEARNING_RATE}.model')
+       torch.save(transformer, f'././././saved/bert-base-cased/BERT_{MAX_LENGTH}_{loss_fn_name}_{epoch}_6lbls_jigsaw_{LEARNING_RATE}_MAX_POOLING.model')
        
        torch.cuda.empty_cache() # always empty cache before you start a new epoch
     
-    with open(f'././././Metrics_results/BERT-Base-cased/training/BERT-Cased-xavier_{MAX_LENGTH}_{loss_fn_name}_jigsaw_6lbls_training_{LEARNING_RATE}.pkl', 'wb') as f:
+    with open(f'././././Metrics_results/BERT-Base-cased/training/BERT-Cased_{MAX_LENGTH}_{loss_fn_name}_jigsaw_6lbls_training_{LEARNING_RATE}_MAX_POOLING.pkl', 'wb') as f:
         pickle.dump(training_log, f)
 
-    with open(f'././././Metrics_results/BERT-Base-cased/validation/BERT-Cased-xavier_{MAX_LENGTH}_{loss_fn_name}_jigsaw_6lbls_validation_{LEARNING_RATE}.pkl', 'wb') as f:
+    with open(f'././././Metrics_results/BERT-Base-cased/validation/BERT-Cased_{MAX_LENGTH}_{loss_fn_name}_jigsaw_6lbls_validation_{LEARNING_RATE}_MAX_POOLING.pkl', 'wb') as f:
         pickle.dump(validation_log, f)
    
 except RuntimeError as e:

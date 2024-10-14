@@ -126,9 +126,9 @@ with torch.no_grad():
         'CECE' : cece_result.item()
     })
 
-    print(f'\n\nPrinting test metrics.  Accuracy: {results['accuracy'].item()}, F1 (Macro): {results['f1_Macro'].item()}, F1 (Micro): {results['f1_Micro'].item()}, F1 (Weighted) : {results['f1_Weighted'].item()}, AUC: { results['auc_roc_macro'].item() }, precision_macro: {results['precision_macro'].item()}, precision_micro: {results['precision_micro'].item()}, recall_macro: {results['recall_macro'].item()}, recall_micro: {results['recall_micro'].item()}')#f'Training Epoch {epoch_id}: Average Training Loss: {average_loss}')
+    print(f'\n\nPrinting test metrics.  Accuracy: {results['accuracy'].item()}, F1 (Macro): {results['f1_Macro'].item()}, F1 (Micro): {results['f1_Micro'].item()}, F1 (Weighted) : {results['f1_Weighted'].item()}, AUC: { results['auc_roc_macro'].item() }, precision_macro: {results['precision_macro'].item()}, precision_micro: {results['precision_micro'].item()}, recall_macro: {results['recall_macro'].item()}, recall_micro: {results['recall_micro'].item()}, CECE: ${cece_result.item()}')#f'Training Epoch {epoch_id}: Average Training Loss: {average_loss}')
     
-    with open(f'././././Metrics_results/roberta-base/test/roberta-ML-Cased-jigsaw_6lbls_{'BCE'}__training.pkl', 'wb') as f:
+    with open(f'././././Metrics_results/roberta-base/test/roberta-ML-Cased-jigsaw_6lbls_{'FL'}__training.pkl', 'wb') as f:
         pickle.dump(test_log, f)
 
 

@@ -1,20 +1,25 @@
 import torch
 from torch.utils.data import DataLoader
+from iterstrat.ml_stratifiers import MultilabelStratifiedKFold
+#from sklearn.model_selection import KFold
 import tqdm
-import sys 
-from torchmetrics import MetricCollection, Metric, Accuracy, Precision, Recall, AUROC, F1Score, ROC, PrecisionRecallCurve, ConfusionMatrix
-import pickle
-sys.path.append('./')
-from model_skeleton_multilabel_v3 import HateSpeechDataset, HateSpeechTagger, HateSpeechv2Dataset
-from LossFunctions.ClassWiseExpectedCalibrationError import CECE
-from LossFunctions.FocalLoss import FocalLoss
-from sklearn.utils import class_weight
 import numpy as np
 import pandas as pd
+import pickle
+import os
+from torchmetrics import MetricCollection, ConfusionMatrix, Accuracy, Precision, Recall, AUROC, F1Score, ROC, PrecisionRecallCurve
+import sys
+sys.path.append('./')
+from model_skeleton_multilabel_v3 import HateSpeechTagger
+from model_skeleton_multilabel_v4 import HateSpeechv2Dataset
+from LossFunctions.ClassWiseExpectedCalibrationError import CECE
+from LossFunctions.FocalLoss import FocalLoss
 
-MODEL_NAME = 'roberta-base'
-EPOCHS = 3
-LEARNING_RATE = 2e-5
+# https://github.com/trent-b/iterative-stratification
+
+MODEL_NAME = 'bert-base-uncased'
+EPOCHS = 2
+LEARNING_RATE = 3e-5
 NUM_LABELS = 6
 BATCH = 16
 
@@ -22,50 +27,8 @@ BATCH = 16
 PIN_MEMORY = True
 NUM_WORKERS = 0
 PREFETCH_FACTOR = None
-MAX_LENGTH = 128
-loss_fn_name = 'FL'
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu') # load the device as cuda if you have a graphic card or cpu if not
-
-# loading embeddings and labels for train and validation
-#train, validation = torch.load(f'././././tokenized/{tokenizer_folder_name}/multi-label/train_wiki_280.pth'), torch.load(f'././././tokenized/{tokenizer_folder_name}/multi-label/validation_wiki_280.pth')
-
-training_pd, validation_pd = pd.read_csv('././Data/jigsaw.15.train.multi-label.csv'), pd.read_csv('././Data/jigsaw.validation.multi-label_mixed.csv')
-
-train_dl, validation_dl = DataLoader(HateSpeechv2Dataset(dataset=training_pd, model_name=MODEL_NAME, without_sexual_explict=False, max_length=MAX_LENGTH), batch_size=BATCH, shuffle=True, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH_FACTOR, pin_memory=PIN_MEMORY), DataLoader(HateSpeechv2Dataset(dataset=validation_pd, model_name=MODEL_NAME, without_sexual_explict=False, max_length=MAX_LENGTH), batch_size=BATCH, shuffle=True,num_workers=NUM_WORKERS, prefetch_factor=PREFETCH_FACTOR, pin_memory=PIN_MEMORY)
-
-transformer = HateSpeechTagger(model_name=MODEL_NAME, n_classes=NUM_LABELS, attn_dropout=.4, model_dropout=.4)
-transformer.to(device=device) # run on cuda
-# set the optimizer
-optimizer = torch.optim.AdamW(params=transformer.parameters(), lr=LEARNING_RATE)#, weight_decay=0.0001, eps=1e-8)
-
-# Convert labels to binary (if not already) and flatten the array
-binary_labels = training_pd[['toxicity', 'obscene', 'sexual_explicit', 'identity_attack', 'insult', 'threat']].to_numpy()
-
-# Compute class weights for each class
-class_weights = []
-for i in range(binary_labels.shape[1]):
-    y = binary_labels[:, i]
-    unique_classes = np.unique(y)
-    weight = class_weight.compute_class_weight(class_weight='balanced',
-                                        classes=unique_classes,
-                                        y=y)
-    print(weight)
-    if len(weight) == 2:
-        class_weights.append(weight[1])  # Append the weight for class '1'
-    else:
-        class_weights.append(weight[0])  # Append the single weight element # weight[0] corresponds to the weight for class '1'
-
-    
-print('Class weights', class_weights)
-
-pos_weights = torch.tensor(class_weights).to(device=device)
-criterion = torch.nn.BCEWithLogitsLoss()
-
-if loss_fn_name == 'FL':
-    criterion = FocalLoss(alpha=.25, gamma=3)#, pos_weights=pos_weights) 
-
-THRESHOLD, num_labels = .5, NUM_LABELS # 8 was ok
+THRESHOLD, num_labels = .5, 6
 train_metric = MetricCollection({
             'accuracy': Accuracy(task="multilabel", threshold=THRESHOLD, num_labels=num_labels),
             'auc_roc_macro': AUROC(num_labels=num_labels, average='macro', task='multilabel'),
@@ -93,61 +56,52 @@ train_metric = MetricCollection({
 
 validation_metric = train_metric.clone()
 
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu') # load the device as cuda if you have a graphic card or cpu if not
+
 train_metric.to(device)
 validation_metric.to(device)
 
-total_steps = len(train_dl) * EPOCHS
-
-# Set the number of warmup steps
-warmup_steps = int(0.1 * total_steps)
-print('warm up steps', warmup_steps)
-
-# total_steps = len(train_dl) * EPOCHS
-# scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=1e-5, 
-#                                               max_lr=LEARNING_RATE, 
-#                                               step_size_up=warmup_steps, 
-#                                               mode='triangular2'
-#                                               )  #get_linear_schedule_with_warmup(optimizer, num_warmup_steps=0, num_training_steps=total_steps)
+# loading embeddings and labels for train and validation
+training_pd = pd.read_csv('././Data/jigsaw.15.train.multi-label.csv')
+labels = ['toxicity', 'obscene', 'sexual_explicit', 'identity_attack', 'insult', 'threat']
+y_labels = training_pd[labels].values
+dataset = HateSpeechv2Dataset(dataset=training_pd, model_name=MODEL_NAME, without_sexual_explict=False, max_length=128)  
 
 training_log = []
-def train_epoch(epoch, check_interval = 10_000) :
+def train_epoch(transformer, fold, criterion, optimizer, train_dl, device, epoch, train_metric = None) :
     avg_training_loss = 0.
     total_loss, num_batches = 0., 0
     all_loss = []
-    transformer.train(True)
+    transformer.train()
     predictions, targets = [], []
     progress = tqdm.tqdm(train_dl, desc=f'Training Epoch {epoch}', leave=False)
     for i, data in enumerate(progress):
         input_ids = data['input_ids'].to(device, non_blocking=True)
         attention_mask =  data['attention_mask'].to(device, non_blocking=True)
-        labels = data['labels'].to(device, non_blocking=True)       
+        labels = data['labels'].to(device, non_blocking=True)
         
         optimizer.zero_grad()
         
         pred = transformer(input_ids, attention_mask)
+        transformed_predictions = pred.squeeze()
         loss = criterion(pred, labels)
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(transformer.parameters(), 1.0)
-        optimizer.step()
-              
-        total_loss += loss.item()
         all_loss.append(loss)
+        total_loss += loss.item()        
+        optimizer.step()
         
-        probs = torch.sigmoid(pred) 
+               
+        probs = torch.sigmoid(transformed_predictions).detach()
         labels_cpu = labels.detach()
         predictions.append(probs)
         targets.append(labels_cpu)
         
-        num_batches += 1    
+        num_batches += 1
+        torch.nn.utils.clip_grad_norm_(transformer.parameters(), 1.0)
         
-        if i != 0 and i % check_interval == 0:
-            validate_epoch(epoch=epoch)        
-            # Update the progress bar
-            progress.set_postfix({'batch_loss': loss.item()})
-            
-        
-        
-            
+    # Update the progress bar
+    progress.set_postfix({'batch_loss': loss.item()})
+    
     all_predictions = torch.cat(predictions)
     all_targets = torch.cat(targets)
     
@@ -155,6 +109,7 @@ def train_epoch(epoch, check_interval = 10_000) :
             
     avg_training_loss = total_loss/num_batches
     training_log.append({
+        'kFold': fold,
         'epoch' : epoch, 
         'accuracy': results['accuracy'].item(),
         'train_loss' : avg_training_loss,
@@ -182,17 +137,17 @@ def train_epoch(epoch, check_interval = 10_000) :
         'precision_recall_curve': results['precision_recall_curve'],
         'confusion_matrix': results['confusion_matrix']
     })
-    print(f'\n\nPrinting training metrics. Epoch: {epoch}, loss: {avg_training_loss}, AUC: { results['auc_roc_macro'].item() }, precision_macro: {results['precision_macro'].item()}, precision_micro: {results['precision_micro'].item()}, recall_macro: {results['recall_macro'].item()}, recall_micro: {results['recall_micro'].item()}')#f'Training Epoch {epoch_id}: Average Training Loss: {average_loss}')
-    #f'Training Epoch {epoch_id}: Average Training Loss: {average_loss}')
+    print(f'\n\nPrinting training metrics. Epoch: {epoch}, loss: {avg_training_loss}, Accuracy: {results['accuracy'].item()}, F1 (Macro): {results['f1_Micro'].item()}, F1 (Weighted) : {results['f1_Weighted'].item()},  AUC: { results['auc_roc_macro'].item() }, precision_macro: {results['precision_macro'].item()}, precision_micro: {results['precision_micro'].item()}, recall_macro: {results['recall_macro'].item()}, recall_micro: {results['recall_micro'].item()}')#f'Training Epoch {epoch_id}: Average Training Loss: {average_loss}')
+    return avg_training_loss, results
 
-
-validation_log, n_bins = [], 15
-def validate_epoch(epoch):
+n_bins = 15
+validation_log = []
+def validate_epoch(transformer, fold, criterion, validation_dl, device, epoch, validation_metric = None):
+    predictions, targets = [], []
     avg_validation_loss = 0.
     total_loss, num_batches = 0., 0
     all_loss = []
     transformer.eval()
-    predictions, targets = [], []
     progress = tqdm.tqdm(validation_dl, desc='Validation batch...', leave=False)
     with torch.no_grad():
         for _, data in enumerate(progress):
@@ -201,22 +156,25 @@ def validate_epoch(epoch):
             labels = data['labels'].to(device, non_blocking=True)
             
             pred = transformer(input_ids, attention_mask)
-            #transformed_predictions = pred.squeeze()
-            loss = criterion(pred, labels)
+            transformed_predictions = pred.squeeze()
+            loss = criterion(transformed_predictions, labels)
             all_loss.append(loss)
             total_loss += loss.item()     
             
-            probs = torch.sigmoid(pred)
-            labels_cpu = labels.detach()
-            predictions.append(probs)
-            targets.append(labels_cpu)
+            probs = torch.sigmoid(transformed_predictions)
             
             num_batches += 1
+            
+            labels_cpu = labels.detach()
+            
+            predictions.append(probs)
+            targets.append(labels_cpu)
         
         all_predictions = torch.cat(predictions)
         all_targets = torch.cat(targets)
         
-        results = validation_metric(all_predictions.to(torch.float32), all_targets.to(torch.int32))    
+        results = validation_metric(all_predictions.to(torch.float32), all_targets.to(torch.int32))
+        
         avg_validation_loss = total_loss/num_batches
         
         class_wise_calibration_error = CECE(num_classes=NUM_LABELS, n_bins=n_bins, norm='l2') # get the count of classes for the experiment and the number of bins (Dataset will be split in 10 parts or nbins)
@@ -224,6 +182,7 @@ def validate_epoch(epoch):
         cece_result = class_wise_calibration_error.compute()
         
         validation_log.append({
+        'kFold': fold,
         'epoch' : epoch, 
         'accuracy': results['accuracy'].item(),
         'train_loss' : avg_validation_loss,
@@ -251,33 +210,74 @@ def validate_epoch(epoch):
         'precision_recall_curve': results['precision_recall_curve'],
         'confusion_matrix': results['confusion_matrix'],
         'CECE' : cece_result.item()
-        })
+    })
         
-        print(f'\n\nPrinting validation metrics. Epoch: {epoch}, loss: {avg_validation_loss}, Accuracy: {results['accuracy'].item()}, F1 (Macro): {results['f1_Micro'].item()}, F1 (Weighted) : {results['f1_Weighted'].item()}, AUC: { results['auc_roc_macro'].item() }, precision_macro: {results['precision_macro'].item()}, precision_micro: {results['precision_micro'].item()}, recall_macro: {results['recall_macro'].item()}, recall_micro: {results['recall_micro'].item()}, CECE : {cece_result.item()}')#f'Training Epoch {epoch_id}: Average Training Loss: {average_loss}')
-        return avg_validation_loss
+        
+    print(f'\n\nPrinting validation metrics. Epoch: {epoch}, loss: {avg_validation_loss}, Accuracy: {results['accuracy'].item()}, F1 (Macro): {results['f1_Micro'].item()}, F1 (Weighted) : {results['f1_Weighted'].item()}, AUC: { results['auc_roc_macro'].item() }, precision_macro: {results['precision_macro'].item()}, precision_micro: {results['precision_micro'].item()}, recall_macro: {results['recall_macro'].item()}, recall_micro: {results['recall_micro'].item()}, CECE : {cece_result.item()}')#f'Training Epoch {epoch_id}: Average Training Loss: {average_loss}')
+    return avg_validation_loss, results
 
 
+# K-Fold Cross Validation
+mlskf = MultilabelStratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+fold = 0
+
+checkpoint_dir = "./saved/bert-base-uncased"
+os.makedirs(checkpoint_dir, exist_ok=True)
+
+
+
+def calc_step_size(batch_size, samples):
+    if batch_size <= 0:
+        raise ValueError("Batch size must be a positive integer")
+    return samples // batch_size # integer division
 
 try:
     torch.cuda.empty_cache()
-    progress = tqdm.tqdm(range(1, EPOCHS + 1), desc='Training Epoch...', leave=True) 
-   
-    for epoch in progress:
-       # Start training
-       train_epoch(epoch=epoch, check_interval=10_000)
-       
-       # validate epoch
-       validate_epoch(epoch=epoch)
-       
-       torch.save(transformer, f'././././saved/roberta-base/roberta-base_kaiming_{MAX_LENGTH}_{loss_fn_name}_{epoch}_6lbls_MAX_POOLING_jigsaw_{LEARNING_RATE}.model')
-       
-       torch.cuda.empty_cache() # always empty cache before you start a new epoch
     
-    with open(f'././././Metrics_results/roberta-base/training/roberta-base-kaiming_{MAX_LENGTH}_{loss_fn_name}_jigsaw_6lbls_MAX_POOLING_training_{LEARNING_RATE}.pkl', 'wb') as f:
+    for fold, (train_index, val_index) in enumerate(
+        mlskf.split(np.arange(len(dataset)), y_labels)
+        ):
+        train_subsampler = torch.utils.data.SubsetRandomSampler(train_index)
+        val_subsampler = torch.utils.data.SubsetRandomSampler(val_index)
+        train_dataloader, validation_dataloader = DataLoader(dataset, sampler=train_subsampler, drop_last=True, batch_size=BATCH, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH_FACTOR, pin_memory=PIN_MEMORY), DataLoader(dataset, sampler=val_subsampler, drop_last=True, batch_size=BATCH, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH_FACTOR, pin_memory=PIN_MEMORY)
+        training_samples_len = len(train_dataloader)
+        
+        print('training steps: ', training_samples_len)
+        print('kfold: ',len(train_dataloader), len(validation_dataloader))
+        
+        # Let's leave everything as is for the moment
+        # We loaded the BERT Model
+        # default : alpha .25 and gamma 2
+        # before: alpha .35 and gamma 3
+        # current: alpha .15 and gamma = 2
+        transformer = HateSpeechTagger(model_name=MODEL_NAME, n_classes=NUM_LABELS)
+        transformer.to(device=device) # run on cuda
+        # set the optimizer
+        optimizer = torch.optim.AdamW(params=transformer.parameters(), lr=LEARNING_RATE, weight_decay=0.05) # used to be .05
+        criterion = FocalLoss(alpha=.25, gamma=3) #torch.nn.BCELoss() # <-- unlike bce logits loss, this loss function's result will not be influenced by an internal sigmoid function. I might revise FocalLoss
+        #scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=1e-7, step_size_up=training_samples_len, max_lr=LEARNING_RATE, mode='triangular2')
+        progress =  tqdm.tqdm(range(1,EPOCHS+1), desc='Training epoch...', leave=True)
+        
+        for epoch in progress:
+            # Train
+            train_average_loss, train_metrics_computed = train_epoch(transformer=transformer, fold=fold+1, criterion=criterion, optimizer=optimizer, device=device, train_metric=train_metric, train_dl=train_dataloader, epoch=epoch)
+            # Validation
+            val_average_loss, val_metrics_computed = validate_epoch(transformer=transformer, fold=fold+1, criterion=criterion, validation_dl=validation_dataloader, device=device, validation_metric=validation_metric, epoch=epoch)    
+             # save checkpoint
+            torch.save(transformer, f'./saved/bert-base-uncased/fold/BERT_FL_{BATCH}_{epoch}_fold_{fold+1}.model')    
+            
+            #scheduler.step() # <-- normally we do this
+            
+            progress.set_description(f"Epoch {epoch}, Mean Validation Loss: {val_average_loss:.4f}")
+            torch.cuda.empty_cache()
+    
+    with open(f'././././Metrics_results/BERT-Base-Uncased/training/BERT-uncased-kfold-FocalLoss_{BATCH}_training_{LEARNING_RATE}.pkl', 'wb') as f:
         pickle.dump(training_log, f)
 
-    with open(f'././././Metrics_results/roberta-base/validation/roberta-base-kaiming_{MAX_LENGTH}_{loss_fn_name}_jigsaw_6lbls_MAX_POOLING_validation_{LEARNING_RATE}.pkl', 'wb') as f:
+    with open(f'././././Metrics_results/BERT-Base-Uncased/validation/BERT-uncased-kfold-FocalLoss_{BATCH}_validation_{LEARNING_RATE}.pkl', 'wb') as f:
         pickle.dump(validation_log, f)
-   
+        
+        
+    
 except RuntimeError as e:
     print(e)

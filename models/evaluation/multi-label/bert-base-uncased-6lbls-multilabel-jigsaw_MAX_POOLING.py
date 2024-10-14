@@ -7,13 +7,13 @@ from torch.utils.data import DataLoader
 import pandas as pd
 sys.path.append('./')
 from LossFunctions.ClassWiseExpectedCalibrationError import CECE
-from models.Super_BERT.multi_label.multi_label_implementations.model_skeleton_multilabel_v4 import HateSpeechDataset, HateSpeechTagger, HateSpeechv2Dataset
+from models.Super_BERT.multi_label.multi_label_implementations.model_skeleton_multilabel_v3 import HateSpeechDataset, HateSpeechTagger, HateSpeechv2Dataset
 import pickle
 import os
 
 torch.cuda.empty_cache()
 
-MODEL_NAME = 'distilbert-base-uncased'
+MODEL_NAME = 'bert-base-uncased'
 BATCH = 16
 
 ##### for dataloaders ####
@@ -29,7 +29,7 @@ sys.path.append(os.path.abspath('./models/Super_BERT/multi_label/multi_label_imp
 test_samples = pd.read_csv('././Data/jigsaw.test.csv') #torch.load('././tokenized/BERT-BASE-CASED/test.pth') # Call the tokenized dataset
 test_dataloader = DataLoader(HateSpeechv2Dataset(dataset=test_samples, model_name=MODEL_NAME, max_length=MAX_LENGTH, without_sexual_explict=False), batch_size=BATCH, shuffle=True, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH_FACTOR, pin_memory=PIN_MEMORY) # convert it to a pytorch dataset
 
-folder_name, file_name = 'distilbert-base-uncased',  'DistilBERT_jigsaw_BCE_3_6lbls_jigsaw'
+folder_name, file_name = 'bert-base-uncased',  'BERT_uncased_kaiming_jigsaw_128_FL_3_MAX_POOLING_6lbls_jigsaw'
 checkpoint_path = f'././saved/{folder_name}/{file_name}.model'
 
 # from here: https://stackoverflow.com/questions/67838192/size-mismatch-runtime-error-when-trying-to-load-a-pytorch-model
@@ -50,7 +50,6 @@ test_metric = MetricCollection({
             'f1_Micro': F1Score(task='multilabel', threshold= THRESHOLD, average='micro', num_labels=num_labels),
             'f1_Weighted': F1Score(task='multilabel', threshold= THRESHOLD, average='weighted', num_labels=num_labels),
             'f1': F1Score(task='multilabel', threshold= THRESHOLD, num_labels=num_labels),
-            'f1_95': F1Score(task='multilabel', threshold= 0.9590000000000001, num_labels=num_labels), # Corentin Duchene
             'f1_per_class': F1Score(num_labels=num_labels, threshold= THRESHOLD, average=None, task='multilabel'),
             'precision_macro': Precision(num_labels=num_labels, threshold= THRESHOLD, average='macro', task='multilabel'),
             'precision_micro': Precision(num_labels=num_labels, threshold= THRESHOLD, average='micro', task='multilabel'),
@@ -124,12 +123,11 @@ with torch.no_grad():
         'recall_per_class_weighted': results['recall_per_class_weighted'],
         'precision_recall_curve': results['precision_recall_curve'],
         'confusion_matrix': results['confusion_matrix'],
-        'f1': results['f1'],
         'CECE' : cece_result.item()
     })
     print(f'\n\nPrinting test metrics.  Accuracy: {results['accuracy'].item()}, F1 (Macro): {results['f1_Macro'].item()}, F1 (Micro): {results['f1_Micro'].item()}, F1 (Weighted) : {results['f1_Weighted'].item()}, AUC: { results['auc_roc_macro'].item() }, precision_macro: {results['precision_macro'].item()}, precision_micro: {results['precision_micro'].item()}, recall_macro: {results['recall_macro'].item()}, recall_micro: {results['recall_micro'].item()}, CECE: {cece_result.item()}')#f'Training Epoch {epoch_id}: Average Training Loss: {average_loss}')
     
-    with open(f'././././Metrics_results/distilbert-base-uncased/test/DistilBERT-ML-Uncased-jigsaw_6lbls_{'BCE'}_128CECE_training.pkl', 'wb') as f:
+    with open(f'././././Metrics_results/BERT-Base-Uncased/test/BERT-ML-Uncased-jigsaw_6lbls_{'FL'}_{MAX_LENGTH}_MAX_POOLING_testing.pkl', 'wb') as f:
         pickle.dump(test_log, f)
 
 
