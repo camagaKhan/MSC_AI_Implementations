@@ -14,7 +14,7 @@ import glob
 
 torch.cuda.empty_cache()
 
-MODEL_NAME = 'bert-base-cased'
+MODEL_NAME = 'roberta-base'
 BATCH = 16
 
 ##### for dataloaders ####
@@ -32,7 +32,7 @@ test_dataloader = DataLoader(HateSpeechv2Dataset(dataset=test_samples, model_nam
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-if os.path.isdir('./././saved/'):
+if os.path.isdir('./././saved/roberta-base/fold/'):
     print("Directory exists")
 else:
     print("Directory does not exist")
@@ -64,14 +64,13 @@ test_metric = MetricCollection({
             'confusion_matrix': ConfusionMatrix(threshold=THRESHOLD, num_labels=num_labels, task='multilabel')
         })
 
-
 all_ensemble_probs, all_labels = [], []
 
 test_metric.to(device)
 models = []
 for i in range(1, 6):
-    checkpoint = f'BERT_FL_16_2_fold_{i}.model'
-    model = torch.load(f'./././saved/bert-base-cased/fold/{checkpoint}')
+    checkpoint = f'RoBERTa_16_2_fold_{i}.model'
+    model = torch.load(f'./././saved/roberta-base/fold/{checkpoint}')
     model.to(device)
     model.eval()
     models.append(model)
@@ -118,8 +117,7 @@ final_results = test_metric.compute()
 
 myResults = dict(results = final_results, cece = cece_result)
 
-
-with open(f'././././Metrics_results/ensemble/bert_cased-ML-Cased-jigsaw_6lbls_{'FL'}_ensemble_averaging_training.pkl', 'wb') as f:
+with open(f'././././Metrics_results/ensemble/roberta_base-ML-Cased-jigsaw_6lbls_{'FL'}_ensemble_averaging_training.pkl', 'wb') as f:
     pickle.dump(myResults, f)
 
 # Print the final evaluation results
@@ -127,8 +125,6 @@ print(f"Final Test Metrics: {myResults}")
 
 # Reset the metric for future evaluation if necessary
 test_metric.reset()
-        
-
 
 
 
