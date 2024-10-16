@@ -29,7 +29,7 @@ sys.path.append(os.path.abspath('./models/Super_BERT/multi_label/multi_label_imp
 test_samples = pd.read_csv('././Data/jigsaw.test.csv') #torch.load('././tokenized/BERT-BASE-CASED/test.pth') # Call the tokenized dataset
 test_dataloader = DataLoader(HateSpeechv2Dataset(dataset=test_samples, model_name=MODEL_NAME, max_length=MAX_LENGTH, without_sexual_explict=False), batch_size=BATCH, shuffle=True, num_workers=NUM_WORKERS, prefetch_factor=PREFETCH_FACTOR, pin_memory=PIN_MEMORY) # convert it to a pytorch dataset
 
-folder_name, file_name = 'hateBERT',  'HateBERT_kaiming_128_BCE_3_6lbls_jigsaw_2e-05'
+folder_name, file_name = 'hateBERT',  'HateBERT_kaiming_128_FL_3_6lbls_jigsaw_2e-05'
 checkpoint_path = f'././saved/{folder_name}/{file_name}.model'
 
 # from here: https://stackoverflow.com/questions/67838192/size-mismatch-runtime-error-when-trying-to-load-a-pytorch-model
@@ -126,7 +126,7 @@ with torch.no_grad():
     })
     print(f'\n\nPrinting test metrics.  Accuracy: {results['accuracy'].item()}, F1 (Macro): {results['f1_Macro'].item()}, F1 (Micro): {results['f1_Micro'].item()}, F1 (Weighted) : {results['f1_Weighted'].item()}, AUC: { results['auc_roc_macro'].item() }, precision_macro: {results['precision_macro'].item()}, precision_micro: {results['precision_micro'].item()}, recall_macro: {results['recall_macro'].item()}, recall_micro: {results['recall_micro'].item()}, CECE: {cece_result.item()}')#f'Training Epoch {epoch_id}: Average Training Loss: {average_loss}')
     
-    with open(f'././././Metrics_results/HateBert/test/HateBert-ML-jigsaw_6lbls_{'BCE'}_{MAX_LENGTH}_testing.pkl', 'wb') as f:
+    with open(f'././././Metrics_results/HateBert/test/HateBert-ML-jigsaw_6lbls_{'FL'}_{MAX_LENGTH}_testing.pkl', 'wb') as f:
         pickle.dump(test_log, f)
 
 

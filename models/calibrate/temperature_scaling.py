@@ -12,7 +12,7 @@ from LossFunctions.FocalLoss import FocalLoss
 
 class TemperatureScaling(LightningModule):
     
-    def __init__(self, model, temperature, n_bins = 10, lr = 0.1, num_labels= 6, alpha = .25, gamma = 2, useFocalLoss = False):
+    def __init__(self, model, temperature, n_bins = 10, lr = 0.1, num_labels= 6, alpha = .25, gamma = 2, useFocalLoss = False, max_iter = 50, norm='l2'):
         super(TemperatureScaling, self).__init__()
         self.model = model
         self.lr = lr
@@ -21,6 +21,8 @@ class TemperatureScaling(LightningModule):
         self.alpha = alpha
         self.gamma = gamma
         self.useFocalLoss = useFocalLoss
+        self.max_iter = max_iter
+        self.norm = norm
         self.temperature = nn.Parameter(torch.ones(1) * temperature)
 
     def forward(self, input_ids, attention_mask):
@@ -37,6 +39,8 @@ class TemperatureScaling(LightningModule):
         label_prop, loss_fn_name = 'labels', 'BCELogitsLoss'
         if self.num_labels == 1: 
             label_prop = 'blacklist'
+        
+        if self.useFocalLoss:
             loss_fn_name = f'Focal Loss (gamma: {self.gamma} & alpha: {self.alpha} )'
             
         with torch.no_grad():
@@ -52,7 +56,7 @@ class TemperatureScaling(LightningModule):
         criterion = nn.BCEWithLogitsLoss()
         if self.useFocalLoss:
             criterion = FocalLoss(alpha=self.alpha, gamma=self.gamma)
-        optimizer = torch.optim.LBFGS([self.temperature], lr=self.lr, max_iter=50)
+        optimizer = torch.optim.LBFGS([self.temperature], lr=self.lr, max_iter=self.max_iter)
 
         def eval():
             optimizer.zero_grad()
@@ -65,7 +69,7 @@ class TemperatureScaling(LightningModule):
         optimal_temperature = self.temperature.item()
         
         # Calculcate the Class Calibration loss
-        class_wise_calibration_error = CECE(num_classes=self.num_labels, n_bins=self.n_bins, norm='l2') # get the count of classes for the experiment and the number of bins (Dataset will be split in 10 parts or nbins)
+        class_wise_calibration_error = CECE(num_classes=self.num_labels, n_bins=self.n_bins, norm=self.norm) # get the count of classes for the experiment and the number of bins (Dataset will be split in 10 parts or nbins)
         
         after_temperature_loss = criterion(self.temperature_scale(logits), labels).item()
         class_wise_calibration_error.update(self.temperature_scale(logits).to(torch.float32), labels.to(torch.int32))
