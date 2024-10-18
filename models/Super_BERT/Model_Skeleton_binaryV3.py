@@ -37,6 +37,7 @@ class BinaryHateCrimeDataset (Dataset):
         if self.has_labels:
             labels = torch.tensor(item[self.label_name].astype(float), dtype=torch.float)
             dictionary = dict(index=index, input_ids=tokens['input_ids'], attention_mask=tokens['attention_mask'], blacklist=labels) # <-- Black List or White List
+                              #, comments=item['comment_text']) # 
         else:
             dictionary = dict(index=index, input_ids=tokens['input_ids'], attention_mask=tokens['attention_mask'])
         return dictionary
@@ -63,6 +64,9 @@ class BinaryHateCrimeDataModule(LightningDataModule):
         return DataLoader(self.train_dataset, batch_size=self.batch_size, num_workers=self.num_workers, pin_memory=True, shuffle=True)
     
     def val_dataloader(self):
+        return DataLoader(self.val_dataset, batch_size=self.batch_size, num_workers=self.num_workers, pin_memory=True, shuffle=False)  
+    
+    def test_dataloader(self):
         return DataLoader(self.val_dataset, batch_size=self.batch_size, num_workers=self.num_workers, pin_memory=True, shuffle=False)    
 
 class LightHateCrimeModel (LightningModule) :
