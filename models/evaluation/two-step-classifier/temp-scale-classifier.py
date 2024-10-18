@@ -9,6 +9,7 @@ import os
 sys.path.append('./')
 from LossFunctions.ClassWiseExpectedCalibrationError import CECE
 from models.Super_BERT.Model_Skeleton_binaryV3 import LightHateCrimeModel, BinaryHateCrimeDataset
+from models.calibrate.temperature_scaling import TemperatureScaling 
 from model_skeleton_multilabel_v3 import HateSpeechv2Dataset 
 
 print ('imports ok...')
@@ -35,10 +36,17 @@ binary_model.to(device)
 models = []
 for i in range(1, 6):
     checkpoint = f'BERT_FL_16_2_fold_{i}.model'
+    # with open(f'.\\models\\evaluation\\temp_scale_values\\bert-base-cased_temp.pkl', 'rb') as file:
+    #     data = pickle.load(file)
+        
+    # for temp in data: 
+    #     if temp['chkpt_name'] == checkpoint:
+    #         temp_scale = temp['temperature']
     model = torch.load(f'./././saved/bert-base-cased/fold/{checkpoint}')
-    model.to(device)
-    model.eval()
-    models.append(model)
+    calibrated_model = TemperatureScaling(model, temperature=1.2, lr=0.04, num_labels=6, n_bins=10, alpha=.25, gamma=2, useFocalLoss=True, max_iter=200, norm='l2')
+    calibrated_model.to(device)
+    calibrated_model.eval()
+    models.append(calibrated_model)
 
 THRESHOLD = .5
 num_labels = 6
@@ -141,7 +149,7 @@ cece_result = class_wise_calibration_error.compute()
 
 # Save the results
 results = dict(results=final_results, cece=cece_result)
-with open(f'././././Metrics_results/ensemble/two-step-ML-Cased-jigsaw_6lbls_FL_ensemble_averaging_training.pkl', 'wb') as f:
+with open(f'././././Metrics_results/ensemble/two-step-temp-manual-scale-ML-Cased-jigsaw_6lbls_FL_ensemble_averaging_training.pkl', 'wb') as f:
     pickle.dump(results, f)
 
 print('Results:', results)
