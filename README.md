@@ -3,7 +3,7 @@
 ## How to install the environment? 
 
 1) Download miniconda: [Miniconda Page](https://docs.anaconda.com/miniconda/miniconda-install/)
-2) After cloning the repository, locate the ```environment.yml``` file and install all the project dependencies by typing ```conda env create -f environment.yaml``` in the terminal.
+2) After cloning the repository, locate the ```environment.yml``` file and install all the project dependencies by typing ```conda env create -f environment.yaml``` in the terminal. Be sure to update this line ```prefix: C:\Users\liamm\anaconda3\envs\msc_proper`` inside the *.yml file.
 
 
 ## Project Structure
