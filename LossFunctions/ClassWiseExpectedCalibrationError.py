@@ -21,14 +21,19 @@ class CECE(Metric):
         logits, labels = logits.to(self.device), labels.to(self.device)
         
         # Process each label/class independently as a binary classification task
-        for cls in range(self.num_classes):
-            logit_col = logits[:, cls]  # Logits for the current class
-            label_col = labels[:, cls]  # Labels for the current class
+        if logits.dim() == 1: 
+            ece = self.calibration_error(logits, labels)
+            self.ece_sum[0] += ece
+            self.ece_squared_sum[0] += ece ** 2
+        else :
+            for cls in range(self.num_classes):
+                logit_col = logits[:, cls]  # Logits for the current class
+                label_col = labels[:, cls]  # Labels for the current class
 
-            # Compute calibration error for the current class
-            ece = self.calibration_error(logit_col, label_col)
-            self.ece_sum[cls] += ece
-            self.ece_squared_sum[cls] += ece ** 2
+                # Compute calibration error for the current class
+                ece = self.calibration_error(logit_col, label_col)
+                self.ece_sum[cls] += ece
+                self.ece_squared_sum[cls] += ece ** 2
 
         # Increment the total number of samples processed
         self.total += 1

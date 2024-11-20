@@ -92,15 +92,17 @@ class LightHateCrimeModel (LightningModule) :
         
         # Model configuration and updates
         self.binary_classification_model = AutoModelForSequenceClassification.from_pretrained(self.model_name, config = binary_config)
-        self.hidden_size = self.binary_classification_model.config.hidden_size
+        self.hidden_size = self.binary_classification_model.config.hidden_size #* 4
         
         self.HateCrimeBlackListDropout = torch.nn.Dropout(model_dropout)
         
         # activation
-        #self.model_relu = torch.nn.ReLU()
-        #self.classifier = torch.nn.Linear(self.hidden_size, self.binary_labels)
+        self.model_relu = torch.nn.ReLU()
+        self.dense = nn.Linear(self.hidden_size, self.hidden_size)
+        self.classifier = torch.nn.Linear(self.hidden_size, self.binary_labels)
         ## initialize weights for the classifier layer
-        #torch.nn.init.kaiming_uniform(self.classifier.weight, nonlinearity='relu')
+        torch.nn.init.kaiming_uniform_(self.classifier.weight, nonlinearity='relu')
+        torch.nn.init.kaiming_uniform_(self.dense.weight)
         
         self.loss_fn_binary = nn.BCEWithLogitsLoss()#(weight=self.class_weights)
         
@@ -124,7 +126,27 @@ class LightHateCrimeModel (LightningModule) :
         self.binary_validation_metric = self.binary_train_metric.clone()
         
     def forward(self, input_ids, attn_mask):
-        outputs =self.binary_classification_model(input_ids, attn_mask)
+        outputs =self.binary_classification_model(input_ids, attn_mask)#, output_hidden_states = True)
+        # hidden_states = outputs['hidden_states']
+        
+        # features = torch.cat([
+        #     hidden_states[-1][:,0,:], 
+        #     hidden_states[-2][:,0,:],
+        #     hidden_states[-3][:,0,:],
+        #     hidden_states[-4][:,0,:]
+        # ], dim=-1) # corentin duchene et al. do this.
+        
+        # #features = torch.mean(torch.stack(hidden_states), dim=0)[:, 0, :] # I'm using all hidden states
+        
+        # # find patterns in the data... 
+        # outputs = self.HateCrimeBlackListDropout(features)
+        # outputs = self.dense(outputs)
+        # # output = self.batch_norm(output)
+        # outputs = F.relu(outputs)        
+        
+        # get probabilities
+        #outputs = self.classifier(outputs) # last hidden states is used for classification.         
+          
         outputs = outputs.logits 
         outputs = self.HateCrimeBlackListDropout(outputs) # <--- Before            
         return outputs
